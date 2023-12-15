@@ -23,6 +23,7 @@ This repository contains the implementation of a Cross-Lingual Natural Language 
    ```
    pip install -r requirements.txt
    ```
+3. Install necessary datasets
 
 ## Dataset Preparation
 - Download and preprocess the MultiNLI and XNLI datasets. 
