@@ -28,15 +28,5 @@ This repository contains the implementation of a Cross-Lingual Natural Language 
 - Download and preprocess the MultiNLI and XNLI datasets. 
 - Instructions for preprocessing and format requirements are provided in the `data_preparation` directory.
 
-## Training the Model
-To train the model, run the following command:
-```
-python train.py --config=config/train_config.json
-```
-Adjust the training configurations in `train_config.json` as needed.
-
-## Evaluating the Model
-Evaluate the trained model on the XNLI test set using:
-```
-python evaluate.py --model_checkpoint=path/to/model_checkpoint
-```
+## Run Model
+Run main.py
