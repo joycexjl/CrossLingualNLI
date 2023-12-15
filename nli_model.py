@@ -1,4 +1,5 @@
-import torch.nn as nn
+import torch
+from torch import nn
 from transformers import BertTokenizer, BertForSequenceClassification
 from alignment_model import FastTextAlignmentModel
 
@@ -66,6 +67,55 @@ class CrossLingualNLIModel(nn.Module):
         alignment_enhanced_features = self.layer_norm(alignment_enhanced_features + last_hidden_states)
 
         return outputs.logits
+    
+    def train_model(model, train_loader, optimizer, criterion, device):
+        model.train()
+        total_loss = 0
+
+        for batch in train_loader:
+            # Move batch to device
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+
+            # Reset gradients
+            optimizer.zero_grad()
+
+            # Forward pass
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            loss = criterion(outputs, labels)
+
+            # Backward pass and optimize
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        average_loss = total_loss / len(train_loader)
+        return average_loss
+
+
+    def evaluate_model(model, test_loader, device):
+        model.eval()
+        total_correct = 0
+        total_samples = 0
+
+        with torch.no_grad():
+            for batch in test_loader:
+                # Move batch to device
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                labels = batch['labels'].to(device)
+
+                # Forward pass
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                _, predicted = torch.max(outputs, 1)
+
+                total_correct += (predicted == labels).sum().item()
+                total_samples += labels.size(0)
+
+        accuracy = total_correct / total_samples
+        return accuracy
 
 # class BertNLIModel(nn.Module):
 #     def __init__(self, num_labels=3):  # 3 labels for NLI: entailment, neutral, contradiction
@@ -184,23 +234,3 @@ class CrossLingualNLIModel(nn.Module):
 #         output = self.transformer_encoder(src, src_mask)
 #         output = self.decoder(output)
 #         return output
-
-# # Example configuration for the model
-# ntokens = 20000 # the size of vocabulary
-# emsize = 200 # embedding dimension
-# nhid = 200 # the dimension of the feedforward network model in nn.TransformerEncoder
-# nlayers = 2 # the number of nn.TransformerEncoderLayer in nn.TransformerEncoder
-# nhead = 2 # the number of heads in the multiheadattention models
-# dropout = 0.2 # the dropout value
-
-# model = TransformerModel(ntokens, emsize, nhead, nhid, nlayers, dropout)
-
-# # Example inputs for the model
-# src = torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]) # Example source sequence
-# src_mask = model.generate_square_subsequent_mask(src.size(0)) # Mask for source sequence
-
-# # Forward pass through the model
-# output = model(src, src_mask)
-
-# output.shape # Output tensor shape
-
