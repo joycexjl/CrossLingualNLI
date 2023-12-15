@@ -1,0 +1,17 @@
+# Core libraries
+numpy
+pandas
+scikit-learn
+
+# Deep learning
+torch>=1.7.0
+transformers
+
+# NLP specific libraries
+nltk
+spacy
+
+# FastText for word embeddings
+fasttext
+
+# MUSE - avaliable at https://github.com/facebookresearch/MUSE
