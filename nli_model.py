@@ -1,126 +1,142 @@
-import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.optim import AdamW
-from torch.utils.data import Dataset, DataLoader
-import math
 from transformers import BertTokenizer, BertForSequenceClassification
-import pandas as pd
-from alignment_model import WordAlignmentModel
+from alignment_model import FastTextAlignmentModel
+
+class CrossLingualNLIModel(nn.Module):
+    def __init__(self, source_lang, target_lang, num_labels=3):
+        super(CrossLingualNLIModel, self).__init__()
+
+        # Initialize the alignment model
+        self.alignment_model = FastTextAlignmentModel(source_lang, target_lang)
+
+        # Initialize the BERT model for sequence classification
+        self.bert_model = BertForSequenceClassification.from_pretrained('bert-base-multilingual-cased', num_labels=num_labels)
+
+        # Additional layer to integrate alignment information
+        bert_hidden_size = 768
+        self.alignment_integration_layer = nn.Linear(bert_hidden_size, bert_hidden_size)
+
+        # Dropout layer for regularization
+        self.dropout = nn.Dropout(0.1)
+
+        # Layer normalization
+        self.layer_norm = nn.LayerNorm(bert_hidden_size)
+
+    def preprocess_data(self, sentence_source, sentence_target):
+        # Get alignments
+        alignments = self.alignment_model.align_sentences(sentence_source, sentence_target)
+
+        # Process alignments
+        source_tokens = sentence_source.split()  # Simple tokenization, replace with appropriate method
+        target_tokens = sentence_target.split()  # Simple tokenization, replace with appropriate method
+
+        for src_idx, tgt_idx in alignments:
+            if src_idx < len(source_tokens) and tgt_idx < len(target_tokens):
+                source_tokens[src_idx] += ' <ALIGN>'
+                target_tokens[tgt_idx] += ' <ALIGN>'
+
+        # Rejoin tokens into a string
+        aligned_source_sentence = ' '.join(source_tokens)
+        aligned_target_sentence = ' '.join(target_tokens)
+
+        # Tokenize the aligned sentences
+        tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
+        encoded_input = tokenizer.encode_plus(
+            aligned_source_sentence, 
+            aligned_target_sentence, 
+            return_tensors='pt', 
+            max_length=512, 
+            truncation=True, 
+            padding='max_length'
+        )
+
+        return encoded_input
 
 
-from transformers import get_linear_schedule_with_warmup
+    def forward(self, input_ids, attention_mask):
+        # Forward pass through the BERT model
+        outputs = self.bert_model(input_ids=input_ids, attention_mask=attention_mask)
 
-tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-# Load the dataset
-df = pd.read_json('multinli_1.0/multinli_1.0_train.jsonl')
+        # Extract the last hidden states
+        last_hidden_states = outputs[0]
 
-# Encode all data
-encoded_data = [encode_sentences(tokenizer, row['premise'], row['hypothesis']) for index, row in df.iterrows()]
+        # Process the last hidden states with the alignment integration layer
+        alignment_enhanced_features = self.alignment_integration_layer(last_hidden_states)
+        alignment_enhanced_features = self.dropout(alignment_enhanced_features)
+        alignment_enhanced_features = self.layer_norm(alignment_enhanced_features + last_hidden_states)
 
-class XNLIDataset(Dataset):
-    def __init__(self, encodings, labels):
-        self.encodings = encodings
-        self.labels = labels
+        return outputs.logits
 
-    def __getitem__(self, idx):
-        item = {key: val[idx] for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx])
-        return item
+# class BertNLIModel(nn.Module):
+#     def __init__(self, num_labels=3):  # 3 labels for NLI: entailment, neutral, contradiction
+#         super(BertNLIModel, self).__init__()
+#         self.bert = BertForSequenceClassification.from_pretrained('bert-base-multilingual-cased', num_labels=num_labels)
 
-    def __len__(self):
-        return len(self.labels)
+#     def forward(self, input_ids, attention_mask, labels=None):
+#         output = self.bert(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+#         return output
 
-# Convert encoded data to a dataset
-labels = df['label'].tolist() # Assuming labels are stored in a column 'label'
-dataset = XNLIDataset(encoded_data, labels)
+# num_epochs = 3  # Define the number of epochs
 
-# Create a DataLoader for batching
-train_data_loader = DataLoader(dataset, batch_size=32, shuffle=True)
+# # Instantiate the model
+# model = BertNLIModel()
 
-# Defining the Transformer Model Components
+# # Define the optimizer
+# optimizer = AdamW(model.parameters(), lr=5e-5)
 
-def encode_sentences(tokenizer, premise, hypothesis, max_length=256):
-    # Tokenize and encode the sentences
-    encoded_pair = tokenizer.encode_plus(
-        premise, hypothesis, 
-        max_length=max_length, 
-        padding='max_length', 
-        truncation=True, 
-        return_tensors='pt'
-    )
-    return encoded_pair['input_ids'], encoded_pair['attention_mask']
+# # Scheduler for learning rate decay
+# scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=len(train_data_loader) * num_epochs)
 
-class BertNLIModel(nn.Module):
-    def __init__(self, num_labels=3):  # 3 labels for NLI: entailment, neutral, contradiction
-        super(BertNLIModel, self).__init__()
-        self.bert = BertForSequenceClassification.from_pretrained('bert-base-multilingual-cased', num_labels=num_labels)
+# # Define the loss function
+# criterion = nn.CrossEntropyLoss()
 
-    def forward(self, input_ids, attention_mask, labels=None):
-        output = self.bert(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-        return output
+# # Check if GPU is available
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# model.to(device)
 
-num_epochs = 3  # Define the number of epochs
+# for epoch in range(num_epochs):
+#     model.train()
+#     total_loss = 0
 
-# Instantiate the model
-model = BertNLIModel()
+#     for batch in train_data_loader:
+#         # Move batch to device
+#         input_ids = batch['input_ids'].to(device)
+#         attention_mask = batch['attention_mask'].to(device)
+#         labels = batch['labels'].to(device)
 
-# Define the optimizer
-optimizer = AdamW(model.parameters(), lr=5e-5)
+#         # Clear previous gradients
+#         optimizer.zero_grad()
 
-# Scheduler for learning rate decay
-scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=len(train_data_loader) * num_epochs)
+#         # Forward pass
+#         outputs = model(input_ids, attention_mask, labels)
+#         loss = outputs[0]
 
-# Define the loss function
-criterion = nn.CrossEntropyLoss()
+#         # Backward pass and optimize
+#         loss.backward()
+#         total_loss += loss.item()
+#         optimizer.step()
+#         scheduler.step()
 
-# Check if GPU is available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
+#     # Print progress
+#     print(f"Epoch: {epoch + 1}, Loss: {total_loss / len(train_data_loader)}")
 
-for epoch in range(num_epochs):
-    model.train()
-    total_loss = 0
+# model.eval()
+# total_eval_accuracy = 0
 
-    for batch in train_data_loader:
-        # Move batch to device
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['labels'].to(device)
+# for batch in validation_data_loader:
+#     input_ids = batch['input_ids'].to(device)
+#     attention_mask = batch['attention_mask'].to(device)
+#     labels = batch['labels'].to(device)
 
-        # Clear previous gradients
-        optimizer.zero_grad()
+#     with torch.no_grad():
+#         outputs = model(input_ids, attention_mask, labels)
 
-        # Forward pass
-        outputs = model(input_ids, attention_mask, labels)
-        loss = outputs[0]
+#     logits = outputs[1]
+#     predictions = torch.argmax(logits, dim=-1)
+#     accuracy = (predictions == labels).cpu().numpy().mean() * 100
+#     total_eval_accuracy += accuracy
 
-        # Backward pass and optimize
-        loss.backward()
-        total_loss += loss.item()
-        optimizer.step()
-        scheduler.step()
-
-    # Print progress
-    print(f"Epoch: {epoch + 1}, Loss: {total_loss / len(train_data_loader)}")
-
-model.eval()
-total_eval_accuracy = 0
-
-for batch in validation_data_loader:
-    input_ids = batch['input_ids'].to(device)
-    attention_mask = batch['attention_mask'].to(device)
-    labels = batch['labels'].to(device)
-
-    with torch.no_grad():
-        outputs = model(input_ids, attention_mask, labels)
-
-    logits = outputs[1]
-    predictions = torch.argmax(logits, dim=-1)
-    accuracy = (predictions == labels).cpu().numpy().mean() * 100
-    total_eval_accuracy += accuracy
-
-print(f"Validation Accuracy: {total_eval_accuracy / len(validation_data_loader)}")
+# print(f"Validation Accuracy: {total_eval_accuracy / len(validation_data_loader)}")
 
 
 
